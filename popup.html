@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chess Analyzer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 260px;
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    .header {
+      background: #161b22;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid #21262d;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .logo-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #7ee787;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .logo-sub {
+      font-size: 9px;
+      color: #484f58;
+      letter-spacing: 0.08em;
+    }
+
+    .body {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Toggle */
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .label {
+      font-size: 11px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #21262d;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border: 1px solid #30363d;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 2px;
+      top: 2px;
+      background: #484f58;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .slider { background: #1f3a2a; border-color: #2ea043; }
+    .toggle input:checked + .slider::before { transform: translateX(16px); background: #7ee787; }
+
+    /* Depth slider */
+    .depth-section { display: flex; flex-direction: column; gap: 6px; }
+    .depth-row { display: flex; align-items: center; justify-content: space-between; }
+    .depth-val {
+      font-size: 18px;
+      font-weight: 900;
+      color: #79c0ff;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      background: #21262d;
+      border-radius: 2px;
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      background: #79c0ff;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    /* Turn selector */
+    .turn-section { display: flex; flex-direction: column; gap: 7px; }
+    .turn-options {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 4px;
+    }
+    .turn-option {
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #8b949e;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 7px 0;
+      text-transform: uppercase;
+      transition: background 0.15s, color 0.15s;
+    }
+    .turn-option:hover { color: #e6edf3; }
+    .turn-option.active {
+      background: #1f3a2a;
+      color: #7ee787;
+    }
+
+    /* Status */
+    .status-bar {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #30363d;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.active { background: #7ee787; box-shadow: 0 0 6px #7ee787; }
+    .status-dot.analyzing { background: #e3b341; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .status-text { font-size: 10px; color: #484f58; }
+
+    /* Footer */
+    .footer {
+      padding: 10px 16px;
+      border-top: 1px solid #21262d;
+      font-size: 9px;
+      color: #21262d;
+      text-align: center;
+      letter-spacing: 0.05em;
+    }
+
+    .tip {
+      background: #161b22;
+      border-left: 2px solid #2ea043;
+      padding: 6px 10px;
+      font-size: 10px;
+      color: #8b949e;
+      border-radius: 0 4px 4px 0;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo-icon">♟</div>
+    <div>
+      <div class="logo-text">Chess Analyzer</div>
+      <div class="logo-sub">Powered by Stockfish</div>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- Enable toggle -->
+    <div class="row">
+      <span class="label">Analysis</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggleEnabled" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Depth control -->
+    <div class="depth-section">
+      <div class="depth-row">
+        <span class="label">Search Depth</span>
+        <span class="depth-val" id="depthVal">16</span>
+      </div>
+      <input type="range" id="depthSlider" min="6" max="24" value="16" step="2" />
+    </div>
+
+    <!-- Playing side control -->
+    <div class="turn-section">
+      <span class="label">Playing Side</span>
+      <div class="turn-options" role="group" aria-label="Playing side">
+        <button class="turn-option active" type="button" data-playing-side-mode="auto">Auto</button>
+        <button class="turn-option" type="button" data-playing-side-mode="w">White</button>
+        <button class="turn-option" type="button" data-playing-side-mode="b">Black</button>
+      </div>
+    </div>
+
+    <!-- Side to move control -->
+    <div class="turn-section">
+      <span class="label">Side to Move</span>
+      <div class="turn-options" role="group" aria-label="Side to move">
+        <button class="turn-option active" type="button" data-turn-mode="auto">Auto</button>
+        <button class="turn-option" type="button" data-turn-mode="w">White</button>
+        <button class="turn-option" type="button" data-turn-mode="b">Black</button>
+      </div>
+    </div>
+
+    <!-- Engine status -->
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-text" id="statusText">Open chess.com to begin</div>
+    </div>
+
+    <!-- Tip -->
+    <div class="tip">
+      The overlay is <strong style="color:#e6edf3">draggable</strong> — move it anywhere on the board.
+    </div>
+
+  </div>
+
+  <div class="footer">CHESS ANALYZER v1.0 — FOR LEARNING ONLY</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

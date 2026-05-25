@@ -1,0 +1,159 @@
+/* Chess Analyzer Overlay — injected into chess.com */
+
+#chess-analyzer-overlay {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 999999;
+  width: 220px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #e6edf3;
+  overflow: hidden;
+  transition: opacity 0.2s, transform 0.2s;
+  user-select: none;
+}
+
+#chess-analyzer-overlay.ca-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+}
+
+.ca-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  cursor: grab;
+}
+
+.ca-header:active { cursor: grabbing; }
+
+.ca-logo {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #7ee787;
+  text-transform: uppercase;
+}
+
+.ca-close {
+  background: none;
+  border: none;
+  color: #484f58;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.ca-close:hover { color: #e6edf3; }
+
+.ca-body {
+  padding: 12px;
+}
+
+.ca-status {
+  color: #8b949e;
+  font-size: 11px;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.ca-error { color: #ff7b72; }
+
+.ca-pulse {
+  animation: ca-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes ca-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.ca-dots::after {
+  content: '...';
+  animation: ca-dot-anim 1.2s steps(4, end) infinite;
+}
+
+@keyframes ca-dot-anim {
+  0%  { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+.ca-score-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ca-eval {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  line-height: 1;
+  font-family: 'Courier New', monospace;
+}
+
+.ca-depth {
+  font-size: 10px;
+  color: #484f58;
+}
+
+.ca-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #484f58;
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+
+.ca-best-move {
+  font-size: 18px;
+  font-weight: 700;
+  color: #79c0ff;
+  letter-spacing: 0.5px;
+}
+
+.ca-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ca-move {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: #8b949e;
+}
+
+.ca-move.ca-best {
+  background: #1f3a2a;
+  border-color: #2ea043;
+  color: #7ee787;
+  font-weight: 700;
+}
+
+.ca-fen {
+  margin-top: 10px;
+  font-size: 8.5px;
+  color: #30363d;
+  word-break: break-all;
+  line-height: 1.4;
+  cursor: default;
+}
+.ca-fen:hover { color: #484f58; }

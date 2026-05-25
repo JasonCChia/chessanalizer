@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Chess Analyzer — Stockfish",
+  "version": "1.0.0",
+  "description": "Real-time chess position analysis and move recommendations on chess.com powered by Stockfish.",
+  "permissions": ["scripting", "activeTab", "storage"],
+  "host_permissions": ["https://www.chess.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.chess.com/*"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["engine.js"],
+      "matches": ["https://www.chess.com/*"]
+    }
+  ]
+}
