@@ -624,6 +624,8 @@
     const targetRadius = clamp(squareSize * 0.24, 12, 24);
     const tailRadius = clamp(squareSize * 0.1, 5, 10);
     const tailPad = clamp(squareSize * 0.2, 10, 22);
+    const arrowHeadLength = clamp(boardSize * 0.035, 12, 22);
+    const arrowHeadWidth = clamp(boardSize * 0.026, 9, 16);
     const ux = dx / length;
     const uy = dy / length;
     const x1 = from.x + ux * tailPad;
@@ -631,8 +633,17 @@
 
     arrowLayerEl.innerHTML = `
       <defs>
-        <marker id="ca-arrow-head" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L7,3.5 L0,7 Z" fill="#7ee787"></path>
+        <marker
+          id="ca-arrow-head"
+          viewBox="0 0 ${arrowHeadLength} ${arrowHeadWidth}"
+          markerWidth="${arrowHeadLength}"
+          markerHeight="${arrowHeadWidth}"
+          refX="${arrowHeadLength}"
+          refY="${arrowHeadWidth / 2}"
+          orient="auto"
+          markerUnits="userSpaceOnUse"
+        >
+          <path d="M0,0 L${arrowHeadLength},${arrowHeadWidth / 2} L0,${arrowHeadWidth} Z" fill="#7ee787"></path>
         </marker>
       </defs>
       <circle class="ca-arrow-target" cx="${to.x}" cy="${to.y}" r="${targetRadius}"></circle>
