@@ -13,6 +13,9 @@
   // ── State ──────────────────────────────────────────────────────────────────
   let lastFen = '';
   let overlayEl = null;
+  let arrowLayerEl = null;
+  let currentArrowMove = null;
+  let arrowRedrawFrame = 0;
   let analyzing = false;
   let enabled = true;
   let currentDepth = 16;
@@ -29,6 +32,8 @@
   injectEngine();
   createOverlay();
   startWatcher();
+  window.addEventListener('resize', scheduleArrowRedraw, { passive: true });
+  document.addEventListener('scroll', scheduleArrowRedraw, { capture: true, passive: true });
 
   // Load saved settings
   chrome.storage.sync.get(['enabled', 'depth', 'playingSideMode', 'turnMode'], (s) => {
@@ -36,10 +41,21 @@
     if (s.depth)   currentDepth = s.depth;
     if (isValidSideMode(s.playingSideMode)) playingSideMode = s.playingSideMode;
     if (isValidTurnMode(s.turnMode)) turnMode = s.turnMode;
+    updateOverlayVisibility();
+    if (!enabled) clearBestMoveArrow();
+    if (enabled) onBoardChange();
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'SET_ENABLED') { enabled = msg.value; updateOverlayVisibility(); }
+    if (msg.type === 'SET_ENABLED') {
+      enabled = msg.value;
+      updateOverlayVisibility();
+      if (!enabled) clearBestMoveArrow();
+      if (enabled) {
+        lastFen = '';
+        onBoardChange();
+      }
+    }
     if (msg.type === 'SET_DEPTH')   { currentDepth = msg.value; lastFen = ''; }
     if (msg.type === 'SET_PLAYING_SIDE_MODE') {
       playingSideMode = isValidSideMode(msg.value) ? msg.value : 'auto';
@@ -71,12 +87,25 @@
   }
 
   function onBoardChange() {
-    if (!enabled) return;
+    if (!enabled) {
+      clearBestMoveArrow();
+      return;
+    }
     const board = getBoard();
-    if (!board) return;
+    if (!board) {
+      clearBestMoveArrow();
+      return;
+    }
     const fen = buildFEN(board);
     sendStatus(board);
-    if (!fen || fen === lastFen) return;
+    if (!fen) {
+      clearBestMoveArrow();
+      return;
+    }
+    if (fen === lastFen) {
+      scheduleArrowRedraw();
+      return;
+    }
     lastFen = fen;
     runAnalysis(fen);
   }
@@ -492,6 +521,7 @@
 
   function showLoading() {
     if (!overlayEl) return;
+    clearBestMoveArrow();
     overlayEl.querySelector('.ca-body').innerHTML = `
       <div class="ca-status ca-pulse">Analyzing<span class="ca-dots"></span></div>
     `;
@@ -502,6 +532,7 @@
     const { bestMove, info } = result;
     const { score, moves, depth } = parseInfo(info);
     const sc = scoreColor(score);
+    drawBestMoveArrow(bestMove || moves[0]);
 
     const movesHTML = moves.slice(0, 5).map((m, i) => `
       <span class="ca-move ${i === 0 ? 'ca-best' : ''}">${uciToSan(m)}</span>
@@ -522,6 +553,7 @@
 
   function showError(msg) {
     if (!overlayEl) return;
+    clearBestMoveArrow();
     const body = overlayEl.querySelector('.ca-body');
     body.innerHTML = '<div class="ca-status ca-error"></div>';
     body.querySelector('.ca-error').textContent = msg;
@@ -531,7 +563,131 @@
     `;
   }
 
-  // ── Draggable ──────────────────────────────────────────────────────────────
+  // Board arrow
+  function drawBestMoveArrow(move) {
+    const normalized = normalizeUciMove(move);
+    if (!normalized) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    currentArrowMove = normalized;
+    renderBestMoveArrow(normalized);
+  }
+
+  function scheduleArrowRedraw() {
+    if (!currentArrowMove || arrowRedrawFrame) return;
+    arrowRedrawFrame = requestAnimationFrame(() => {
+      arrowRedrawFrame = 0;
+      if (currentArrowMove) renderBestMoveArrow(currentArrowMove);
+    });
+  }
+
+  function renderBestMoveArrow(move) {
+    const board = getBoard();
+    if (!board) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    const rect = board.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    const from = squareToBoardPoint(move.slice(0, 2), board, rect);
+    const to = squareToBoardPoint(move.slice(2, 4), board, rect);
+    if (!from || !to) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (!length) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    ensureArrowLayer();
+    arrowLayerEl.style.left = `${rect.left}px`;
+    arrowLayerEl.style.top = `${rect.top}px`;
+    arrowLayerEl.style.width = `${rect.width}px`;
+    arrowLayerEl.style.height = `${rect.height}px`;
+    arrowLayerEl.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+
+    const boardSize = Math.min(rect.width, rect.height);
+    const squareSize = boardSize / 8;
+    const strokeWidth = clamp(boardSize * 0.018, 6, 14);
+    const targetRadius = clamp(squareSize * 0.24, 12, 24);
+    const tailRadius = clamp(squareSize * 0.1, 5, 10);
+    const tailPad = clamp(squareSize * 0.2, 10, 22);
+    const ux = dx / length;
+    const uy = dy / length;
+    const x1 = from.x + ux * tailPad;
+    const y1 = from.y + uy * tailPad;
+
+    arrowLayerEl.innerHTML = `
+      <defs>
+        <marker id="ca-arrow-head" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L7,3.5 L0,7 Z" fill="#7ee787"></path>
+        </marker>
+      </defs>
+      <circle class="ca-arrow-target" cx="${to.x}" cy="${to.y}" r="${targetRadius}"></circle>
+      <circle class="ca-arrow-tail" cx="${from.x}" cy="${from.y}" r="${tailRadius}"></circle>
+      <line class="ca-arrow-line" x1="${x1}" y1="${y1}" x2="${to.x}" y2="${to.y}" stroke-width="${strokeWidth}" marker-end="url(#ca-arrow-head)"></line>
+    `;
+    arrowLayerEl.classList.remove('ca-hidden');
+  }
+
+  function ensureArrowLayer() {
+    if (arrowLayerEl) return;
+    arrowLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arrowLayerEl.id = 'chess-analyzer-arrow-layer';
+    arrowLayerEl.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(arrowLayerEl);
+  }
+
+  function clearBestMoveArrow() {
+    currentArrowMove = null;
+    if (arrowRedrawFrame) {
+      cancelAnimationFrame(arrowRedrawFrame);
+      arrowRedrawFrame = 0;
+    }
+    if (arrowLayerEl) {
+      arrowLayerEl.innerHTML = '';
+      arrowLayerEl.classList.add('ca-hidden');
+    }
+  }
+
+  function normalizeUciMove(move) {
+    const match = String(move || '').match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/i);
+    return match ? `${match[1]}${match[2]}${match[3] || ''}`.toLowerCase() : null;
+  }
+
+  function squareToBoardPoint(square, board, rect) {
+    const match = String(square || '').match(/^([a-h])([1-8])$/i);
+    if (!match) return null;
+
+    const file = match[1].toLowerCase().charCodeAt(0) - 97;
+    const rank = Number(match[2]) - 1;
+    const flipped = isFlipped(board);
+    const col = flipped ? 7 - file : file;
+    const row = flipped ? rank : 7 - rank;
+
+    return {
+      x: (col + 0.5) * (rect.width / 8),
+      y: (row + 0.5) * (rect.height / 8)
+    };
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  // Draggable
   function makeDraggable(el) {
     let ox = 0, oy = 0, dragging = false;
     const header = el.querySelector('.ca-header');

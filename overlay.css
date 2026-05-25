@@ -24,6 +24,35 @@
   transform: translateY(-8px);
 }
 
+#chess-analyzer-arrow-layer {
+  position: fixed;
+  z-index: 999998;
+  pointer-events: none;
+  overflow: visible;
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.55));
+}
+
+#chess-analyzer-arrow-layer.ca-hidden {
+  display: none;
+}
+
+.ca-arrow-line {
+  stroke: #7ee787;
+  stroke-linecap: round;
+  opacity: 0.95;
+}
+
+.ca-arrow-target {
+  fill: rgba(126, 231, 135, 0.22);
+  stroke: rgba(126, 231, 135, 0.82);
+  stroke-width: 3;
+}
+
+.ca-arrow-tail {
+  fill: #7ee787;
+  opacity: 0.9;
+}
+
 .ca-header {
   display: flex;
   align-items: center;
