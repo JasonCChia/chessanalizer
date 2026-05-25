@@ -73,6 +73,61 @@
   text-transform: uppercase;
 }
 
+.ca-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ca-power {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.ca-power-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ca-power-track {
+  position: absolute;
+  inset: 0;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 999px;
+  transition: background 0.18s, border-color 0.18s;
+}
+
+.ca-power-track::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  left: 2px;
+  top: 2px;
+  background: #484f58;
+  border-radius: 50%;
+  transition: transform 0.18s, background 0.18s;
+}
+
+.ca-power-input:checked + .ca-power-track {
+  background: #1f3a2a;
+  border-color: #2ea043;
+}
+
+.ca-power-input:checked + .ca-power-track::before {
+  transform: translateX(16px);
+  background: #7ee787;
+}
+
+.ca-paused .ca-logo {
+  color: #8b949e;
+}
+
 .ca-close {
   background: none;
   border: none;
@@ -97,6 +152,8 @@
 }
 
 .ca-error { color: #ff7b72; }
+
+.ca-paused-status { color: #e3b341; }
 
 .ca-pulse {
   animation: ca-blink 1.2s ease-in-out infinite;

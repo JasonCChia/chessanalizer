@@ -9,15 +9,21 @@
     wp: 'P', wr: 'R', wn: 'N', wb: 'B', wq: 'Q', wk: 'K',
     bp: 'p', br: 'r', bn: 'n', bb: 'b', bq: 'q', bk: 'k'
   };
+  const DEFAULT_VISUAL_TOGGLE_HOTKEY = 'Alt+S';
 
   // ── State ──────────────────────────────────────────────────────────────────
   let lastFen = '';
   let overlayEl = null;
   let arrowLayerEl = null;
   let currentArrowMove = null;
+  let lastBestMove = null;
   let arrowRedrawFrame = 0;
   let analyzing = false;
   let enabled = true;
+  let suggestionsEnabled = true;
+  let arrowsEnabled = true;
+  let visualToggleHotkey = DEFAULT_VISUAL_TOGGLE_HOTKEY;
+  let menuOpen = true;
   let currentDepth = 16;
   let playingSideMode = 'auto';
   let turnMode = 'auto';
@@ -34,27 +40,51 @@
   startWatcher();
   window.addEventListener('resize', scheduleArrowRedraw, { passive: true });
   document.addEventListener('scroll', scheduleArrowRedraw, { capture: true, passive: true });
+  document.addEventListener('keydown', handleHotkeys, true);
 
   // Load saved settings
-  chrome.storage.sync.get(['enabled', 'depth', 'playingSideMode', 'turnMode'], (s) => {
+  chrome.storage.sync.get([
+    'enabled',
+    'suggestionsEnabled',
+    'arrowsEnabled',
+    'visualToggleHotkey',
+    'depth',
+    'playingSideMode',
+    'turnMode'
+  ], (s) => {
     if (s.enabled !== undefined) enabled = s.enabled;
+    if (s.suggestionsEnabled !== undefined) suggestionsEnabled = s.suggestionsEnabled;
+    if (s.arrowsEnabled !== undefined) arrowsEnabled = s.arrowsEnabled;
+    if (isValidHotkey(s.visualToggleHotkey)) visualToggleHotkey = s.visualToggleHotkey;
     if (s.depth)   currentDepth = s.depth;
     if (isValidSideMode(s.playingSideMode)) playingSideMode = s.playingSideMode;
     if (isValidTurnMode(s.turnMode)) turnMode = s.turnMode;
     updateOverlayVisibility();
+    updateArrowVisibility();
     if (!enabled) clearBestMoveArrow();
+    updateAnalyzerToggle();
+    if (!enabled) showPaused();
     if (enabled) onBoardChange();
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'SET_ENABLED') {
-      enabled = msg.value;
+      setAnalyzerEnabled(msg.value, { persist: false });
+    }
+    if (msg.type === 'SET_SUGGESTIONS_ENABLED') {
+      suggestionsEnabled = Boolean(msg.value);
+      if (suggestionsEnabled) menuOpen = true;
       updateOverlayVisibility();
-      if (!enabled) clearBestMoveArrow();
-      if (enabled) {
-        lastFen = '';
-        onBoardChange();
-      }
+      sendStatus();
+    }
+    if (msg.type === 'SET_ARROWS_ENABLED') {
+      arrowsEnabled = Boolean(msg.value);
+      updateArrowVisibility();
+      sendStatus();
+    }
+    if (msg.type === 'SET_VISUAL_TOGGLE_HOTKEY') {
+      visualToggleHotkey = isValidHotkey(msg.value) ? msg.value : DEFAULT_VISUAL_TOGGLE_HOTKEY;
+      sendStatus();
     }
     if (msg.type === 'SET_DEPTH')   { currentDepth = msg.value; lastFen = ''; }
     if (msg.type === 'SET_PLAYING_SIDE_MODE') {
@@ -69,6 +99,84 @@
     }
     if (msg.type === 'GET_STATUS')  sendStatus();
   });
+
+  function handleHotkeys(event) {
+    if (event.repeat || isEditableTarget(event.target)) return;
+
+    const hotkey = eventToHotkey(event);
+    if (hotkey === 'Insert') {
+      consumeKey(event);
+      toggleMenuOpen();
+      return;
+    }
+
+    if (visualToggleHotkey && hotkey === visualToggleHotkey) {
+      consumeKey(event);
+      toggleSuggestionVisuals();
+    }
+  }
+
+  function toggleMenuOpen() {
+    if (!suggestionsEnabled) return;
+    menuOpen = !menuOpen;
+    updateOverlayVisibility();
+    sendStatus();
+  }
+
+  function setAnalyzerEnabled(value, options = {}) {
+    enabled = Boolean(value);
+    if (options.persist) chrome.storage.sync.set({ enabled });
+
+    updateAnalyzerToggle();
+    updateOverlayVisibility();
+
+    if (!enabled) {
+      activeAnalysisId++;
+      analyzing = false;
+      stopEngine();
+      clearBestMoveArrow();
+      showPaused();
+      sendStatus();
+      return;
+    }
+
+    menuOpen = true;
+    lastFen = '';
+    onBoardChange();
+    sendStatus();
+  }
+
+  function toggleSuggestionVisuals() {
+    const next = !(suggestionsEnabled && arrowsEnabled);
+    suggestionsEnabled = next;
+    arrowsEnabled = next;
+    if (next) menuOpen = true;
+
+    chrome.storage.sync.set({
+      suggestionsEnabled,
+      arrowsEnabled
+    });
+
+    updateOverlayVisibility();
+    updateArrowVisibility();
+    sendStatus();
+  }
+
+  function consumeKey(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function isEditableTarget(target) {
+    if (!target) return false;
+    const tagName = target.tagName ? target.tagName.toLowerCase() : '';
+    return (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      tagName === 'select' ||
+      target.isContentEditable
+    );
+  }
 
   // ── Engine Injection ───────────────────────────────────────────────────────
   function injectEngine() {
@@ -300,16 +408,17 @@
   async function runAnalysis(fen) {
     const analysisId = ++activeAnalysisId;
     if (analyzing) stopEngine();
+    if (!enabled) return;
     analyzing = true;
     showLoading();
 
     try {
       await waitForEngine(8000);
       const result = await analyzeWithEngine(fen, currentDepth);
-      if (analysisId !== activeAnalysisId) return;
+      if (!enabled || analysisId !== activeAnalysisId) return;
       showResult(result, fen);
     } catch (e) {
-      if (analysisId !== activeAnalysisId) return;
+      if (!enabled || analysisId !== activeAnalysisId) return;
       if (e && e.message) {
         showError(e.message);
         return;
@@ -395,6 +504,36 @@
     });
   }
 
+  function eventToHotkey(event) {
+    const key = normalizeKey(event.key);
+    if (!key || isModifierKey(key)) return '';
+
+    const parts = [];
+    if (event.ctrlKey) parts.push('Ctrl');
+    if (event.altKey) parts.push('Alt');
+    if (event.shiftKey) parts.push('Shift');
+    if (event.metaKey) parts.push('Meta');
+    parts.push(key);
+    return parts.join('+');
+  }
+
+  function normalizeKey(key) {
+    if (!key) return '';
+    if (key === ' ') return 'Space';
+    if (key === 'Esc') return 'Escape';
+    if (key === 'Del') return 'Delete';
+    if (key.length === 1) return key.toUpperCase();
+    return key;
+  }
+
+  function isModifierKey(key) {
+    return key === 'Control' || key === 'Ctrl' || key === 'Alt' || key === 'Shift' || key === 'Meta';
+  }
+
+  function isValidHotkey(value) {
+    return typeof value === 'string' && value.trim().length > 0 && value !== 'Insert';
+  }
+
   function isValidTurnMode(value) {
     return value === 'auto' || value === 'w' || value === 'b';
   }
@@ -426,9 +565,14 @@
 
     safeRuntimeSend({
       type: 'STATUS',
+      enabled,
       analyzing,
       engineReady,
       engineError,
+      suggestionsEnabled,
+      arrowsEnabled,
+      visualToggleHotkey,
+      menuOpen,
       ...sideState
     });
   }
@@ -497,7 +641,13 @@
     overlayEl.innerHTML = `
       <div class="ca-header">
         <span class="ca-logo">♟ Analyzer</span>
-        <button class="ca-close" title="Hide">✕</button>
+        <div class="ca-controls">
+          <label class="ca-power" title="Activate analyzer">
+            <input class="ca-power-input" type="checkbox" checked aria-label="Activate analyzer" />
+            <span class="ca-power-track"></span>
+          </label>
+          <button class="ca-close" title="Hide">✕</button>
+        </div>
       </div>
       <div class="ca-body">
         <div class="ca-status">Waiting for position…</div>
@@ -505,22 +655,40 @@
     `;
     document.body.appendChild(overlayEl);
 
+    overlayEl.querySelector('.ca-power-input').addEventListener('change', (event) => {
+      setAnalyzerEnabled(event.target.checked, { persist: true });
+    });
+
     overlayEl.querySelector('.ca-close').addEventListener('click', () => {
-      overlayEl.classList.add('ca-hidden');
+      menuOpen = false;
+      updateOverlayVisibility();
+      sendStatus();
     });
 
     // Drag support
     makeDraggable(overlayEl);
+    updateAnalyzerToggle();
     updateOverlayVisibility();
   }
 
   function updateOverlayVisibility() {
     if (!overlayEl) return;
-    overlayEl.classList.toggle('ca-hidden', !enabled);
+    overlayEl.classList.toggle('ca-hidden', !suggestionsEnabled || !menuOpen);
+  }
+
+  function updateAnalyzerToggle() {
+    if (!overlayEl) return;
+    const input = overlayEl.querySelector('.ca-power-input');
+    if (input) input.checked = enabled;
+    overlayEl.classList.toggle('ca-paused', !enabled);
   }
 
   function showLoading() {
     if (!overlayEl) return;
+    if (!enabled) {
+      showPaused();
+      return;
+    }
     clearBestMoveArrow();
     overlayEl.querySelector('.ca-body').innerHTML = `
       <div class="ca-status ca-pulse">Analyzing<span class="ca-dots"></span></div>
@@ -529,6 +697,10 @@
 
   function showResult(result, fen) {
     if (!overlayEl) return;
+    if (!enabled) {
+      showPaused();
+      return;
+    }
     const { bestMove, info } = result;
     const { score, moves, depth } = parseInfo(info);
     const sc = scoreColor(score);
@@ -548,6 +720,13 @@
       <div class="ca-label">Top line</div>
       <div class="ca-moves">${movesHTML || '—'}</div>
       <div class="ca-fen" title="${fen}">${fen.split(' ')[0].substring(0, 36)}…</div>
+    `;
+  }
+
+  function showPaused() {
+    if (!overlayEl) return;
+    overlayEl.querySelector('.ca-body').innerHTML = `
+      <div class="ca-status ca-paused-status">Analyzer paused</div>
     `;
   }
 
@@ -571,19 +750,30 @@
       return;
     }
 
+    lastBestMove = normalized;
+    if (!enabled || !arrowsEnabled) {
+      hideBestMoveArrow();
+      return;
+    }
+
     currentArrowMove = normalized;
     renderBestMoveArrow(normalized);
   }
 
   function scheduleArrowRedraw() {
-    if (!currentArrowMove || arrowRedrawFrame) return;
+    if (!enabled || !arrowsEnabled || !currentArrowMove || arrowRedrawFrame) return;
     arrowRedrawFrame = requestAnimationFrame(() => {
       arrowRedrawFrame = 0;
-      if (currentArrowMove) renderBestMoveArrow(currentArrowMove);
+      if (enabled && arrowsEnabled && currentArrowMove) renderBestMoveArrow(currentArrowMove);
     });
   }
 
   function renderBestMoveArrow(move) {
+    if (!enabled || !arrowsEnabled) {
+      hideBestMoveArrow();
+      return;
+    }
+
     const board = getBoard();
     if (!board) {
       clearBestMoveArrow();
@@ -662,6 +852,11 @@
   }
 
   function clearBestMoveArrow() {
+    lastBestMove = null;
+    hideBestMoveArrow();
+  }
+
+  function hideBestMoveArrow() {
     currentArrowMove = null;
     if (arrowRedrawFrame) {
       cancelAnimationFrame(arrowRedrawFrame);
@@ -670,6 +865,18 @@
     if (arrowLayerEl) {
       arrowLayerEl.innerHTML = '';
       arrowLayerEl.classList.add('ca-hidden');
+    }
+  }
+
+  function updateArrowVisibility() {
+    if (!enabled || !arrowsEnabled) {
+      hideBestMoveArrow();
+      return;
+    }
+
+    if (lastBestMove) {
+      currentArrowMove = lastBestMove;
+      renderBestMoveArrow(lastBestMove);
     }
   }
 
@@ -703,6 +910,7 @@
     let ox = 0, oy = 0, dragging = false;
     const header = el.querySelector('.ca-header');
     header.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button, input, label')) return;
       dragging = true;
       ox = e.clientX - el.offsetLeft;
       oy = e.clientY - el.offsetTop;

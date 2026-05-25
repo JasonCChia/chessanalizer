@@ -1,20 +1,44 @@
 // popup.js
 
+const DEFAULT_VISUAL_TOGGLE_HOTKEY = 'Alt+S';
+
 const toggleEnabled = document.getElementById('toggleEnabled');
-const depthSlider   = document.getElementById('depthSlider');
-const depthVal      = document.getElementById('depthVal');
-const statusDot     = document.getElementById('statusDot');
-const statusText    = document.getElementById('statusText');
+const toggleSuggestions = document.getElementById('toggleSuggestions');
+const toggleArrows = document.getElementById('toggleArrows');
+const visualHotkeyInput = document.getElementById('visualHotkeyInput');
+const resetHotkey = document.getElementById('resetHotkey');
+const depthSlider = document.getElementById('depthSlider');
+const depthVal = document.getElementById('depthVal');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
 const playingSideButtons = [...document.querySelectorAll('[data-playing-side-mode]')];
-const turnButtons   = [...document.querySelectorAll('[data-turn-mode]')];
+const turnButtons = [...document.querySelectorAll('[data-turn-mode]')];
+
+let visualToggleHotkey = DEFAULT_VISUAL_TOGGLE_HOTKEY;
+let hotkeyMessageTimer = 0;
 
 // Load saved settings
-chrome.storage.sync.get(['enabled', 'depth', 'playingSideMode', 'turnMode'], (s) => {
+chrome.storage.sync.get([
+  'enabled',
+  'suggestionsEnabled',
+  'arrowsEnabled',
+  'visualToggleHotkey',
+  'depth',
+  'playingSideMode',
+  'turnMode'
+], (s) => {
   const en = s.enabled !== undefined ? s.enabled : true;
+  const suggestions = s.suggestionsEnabled !== undefined ? s.suggestionsEnabled : true;
+  const arrows = s.arrowsEnabled !== undefined ? s.arrowsEnabled : true;
   const dp = s.depth || 16;
   const ps = isValidSideMode(s.playingSideMode) ? s.playingSideMode : 'auto';
   const tm = isValidTurnMode(s.turnMode) ? s.turnMode : 'auto';
+  const hotkey = isValidHotkey(s.visualToggleHotkey) ? s.visualToggleHotkey : DEFAULT_VISUAL_TOGGLE_HOTKEY;
+
   toggleEnabled.checked = en;
+  toggleSuggestions.checked = suggestions;
+  toggleArrows.checked = arrows;
+  setVisualHotkeyUI(hotkey);
   depthSlider.value = dp;
   depthVal.textContent = dp;
   setPlayingSideUI(ps);
@@ -28,9 +52,49 @@ toggleEnabled.addEventListener('change', () => {
   sendToContent({ type: 'SET_ENABLED', value: val });
 });
 
+toggleSuggestions.addEventListener('change', () => {
+  const val = toggleSuggestions.checked;
+  chrome.storage.sync.set({ suggestionsEnabled: val });
+  sendToContent({ type: 'SET_SUGGESTIONS_ENABLED', value: val });
+});
+
+toggleArrows.addEventListener('change', () => {
+  const val = toggleArrows.checked;
+  chrome.storage.sync.set({ arrowsEnabled: val });
+  sendToContent({ type: 'SET_ARROWS_ENABLED', value: val });
+});
+
+visualHotkeyInput.addEventListener('focus', startHotkeyCapture);
+visualHotkeyInput.addEventListener('click', startHotkeyCapture);
+visualHotkeyInput.addEventListener('blur', stopHotkeyCapture);
+visualHotkeyInput.addEventListener('keydown', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (event.key === 'Escape') {
+    visualHotkeyInput.blur();
+    return;
+  }
+
+  const hotkey = eventToHotkey(event);
+  if (!hotkey) return;
+
+  if (isReservedHotkey(hotkey)) {
+    showTemporaryHotkeyMessage('Insert reserved');
+    return;
+  }
+
+  saveVisualHotkey(hotkey);
+  visualHotkeyInput.blur();
+});
+
+resetHotkey.addEventListener('click', () => {
+  saveVisualHotkey(DEFAULT_VISUAL_TOGGLE_HOTKEY);
+});
+
 // Depth slider
 depthSlider.addEventListener('input', () => {
-  const val = parseInt(depthSlider.value);
+  const val = parseInt(depthSlider.value, 10);
   depthVal.textContent = val;
   chrome.storage.sync.set({ depth: val });
   sendToContent({ type: 'SET_DEPTH', value: val });
@@ -63,9 +127,22 @@ function checkStatus() {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'STATUS') {
+    if (typeof msg.enabled === 'boolean') {
+      toggleEnabled.checked = msg.enabled;
+    }
+    if (typeof msg.suggestionsEnabled === 'boolean') {
+      toggleSuggestions.checked = msg.suggestionsEnabled;
+    }
+    if (typeof msg.arrowsEnabled === 'boolean') {
+      toggleArrows.checked = msg.arrowsEnabled;
+    }
+    if (isValidHotkey(msg.visualToggleHotkey) && !visualHotkeyInput.classList.contains('capturing')) {
+      setVisualHotkeyUI(msg.visualToggleHotkey);
+    }
+
     if (msg.analyzing) {
       statusDot.className = 'status-dot analyzing';
-      statusText.textContent = 'Analyzing position…';
+      statusText.textContent = 'Analyzing position...';
     } else if (msg.engineError) {
       statusDot.className = 'status-dot';
       statusText.textContent = msg.engineError;
@@ -89,6 +166,42 @@ async function sendToContent(msg) {
     statusDot.className = 'status-dot';
     statusText.textContent = 'Open chess.com to begin';
   }
+}
+
+function startHotkeyCapture() {
+  clearTimeout(hotkeyMessageTimer);
+  visualHotkeyInput.classList.add('capturing');
+  visualHotkeyInput.value = 'Press shortcut';
+}
+
+function stopHotkeyCapture() {
+  clearTimeout(hotkeyMessageTimer);
+  visualHotkeyInput.classList.remove('capturing');
+  visualHotkeyInput.value = visualToggleHotkey;
+}
+
+function saveVisualHotkey(hotkey) {
+  if (!isValidHotkey(hotkey)) return;
+  setVisualHotkeyUI(hotkey);
+  chrome.storage.sync.set({ visualToggleHotkey: hotkey });
+  sendToContent({ type: 'SET_VISUAL_TOGGLE_HOTKEY', value: hotkey });
+}
+
+function setVisualHotkeyUI(hotkey) {
+  visualToggleHotkey = hotkey;
+  visualHotkeyInput.value = hotkey;
+}
+
+function showTemporaryHotkeyMessage(message) {
+  clearTimeout(hotkeyMessageTimer);
+  visualHotkeyInput.value = message;
+  hotkeyMessageTimer = setTimeout(() => {
+    if (visualHotkeyInput.classList.contains('capturing')) {
+      visualHotkeyInput.value = 'Press shortcut';
+    } else {
+      visualHotkeyInput.value = visualToggleHotkey;
+    }
+  }, 900);
 }
 
 function setTurnModeUI(mode) {
@@ -116,6 +229,40 @@ function labelSide(side) {
   if (side === 'w') return 'White';
   if (side === 'b') return 'Black';
   return '';
+}
+
+function eventToHotkey(event) {
+  const key = normalizeKey(event.key);
+  if (!key || isModifierKey(key)) return '';
+
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (event.metaKey) parts.push('Meta');
+  parts.push(key);
+  return parts.join('+');
+}
+
+function normalizeKey(key) {
+  if (!key) return '';
+  if (key === ' ') return 'Space';
+  if (key === 'Esc') return 'Escape';
+  if (key === 'Del') return 'Delete';
+  if (key.length === 1) return key.toUpperCase();
+  return key;
+}
+
+function isModifierKey(key) {
+  return key === 'Control' || key === 'Ctrl' || key === 'Alt' || key === 'Shift' || key === 'Meta';
+}
+
+function isValidHotkey(value) {
+  return typeof value === 'string' && value.trim().length > 0 && !isReservedHotkey(value);
+}
+
+function isReservedHotkey(value) {
+  return value === 'Insert';
 }
 
 function isValidTurnMode(value) {

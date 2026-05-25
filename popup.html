@@ -8,7 +8,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 260px;
+      width: 280px;
       background: #0d1117;
       color: #e6edf3;
       font-family: 'Courier New', monospace;
@@ -92,6 +92,49 @@
     }
     .toggle input:checked + .slider { background: #1f3a2a; border-color: #2ea043; }
     .toggle input:checked + .slider::before { transform: translateX(16px); background: #7ee787; }
+
+    /* Hotkey */
+    .hotkey-section { display: flex; flex-direction: column; gap: 7px; }
+    .hotkey-controls {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px;
+    }
+    .hotkey-input {
+      min-width: 0;
+      height: 30px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      outline: none;
+      padding: 0 8px;
+      text-align: center;
+    }
+    .hotkey-input:focus,
+    .hotkey-input.capturing {
+      border-color: #2ea043;
+      box-shadow: 0 0 0 1px rgba(46, 160, 67, 0.35);
+      color: #7ee787;
+    }
+    .small-button {
+      height: 30px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #21262d;
+      color: #8b949e;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 0 9px;
+      text-transform: uppercase;
+    }
+    .small-button:hover { color: #e6edf3; border-color: #484f58; }
 
     /* Depth slider */
     .depth-section { display: flex; flex-direction: column; gap: 6px; }
@@ -223,6 +266,32 @@
       </label>
     </div>
 
+    <div class="row">
+      <span class="label">Suggestions</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggleSuggestions" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="row">
+      <span class="label">Move Arrow</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggleArrows" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="hotkey-section">
+      <div class="depth-row">
+        <span class="label">Assist Hotkey</span>
+      </div>
+      <div class="hotkey-controls">
+        <input type="text" id="visualHotkeyInput" class="hotkey-input" value="Alt+S" readonly />
+        <button class="small-button" id="resetHotkey" type="button">Reset</button>
+      </div>
+    </div>
+
     <!-- Depth control -->
     <div class="depth-section">
       <div class="depth-row">
@@ -260,6 +329,7 @@
 
     <!-- Tip -->
     <div class="tip">
+      <strong style="color:#e6edf3">Insert</strong> opens or hides the overlay. The assist hotkey toggles suggestions and arrows.<br />
       The overlay is <strong style="color:#e6edf3">draggable</strong> — move it anywhere on the board.
     </div>
 
