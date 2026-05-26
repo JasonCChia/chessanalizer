@@ -175,6 +175,9 @@
       border-radius: 8px;
       padding: 4px;
     }
+    .turn-options.two {
+      grid-template-columns: repeat(2, 1fr);
+    }
     .turn-option {
       border: 0;
       border-radius: 5px;
@@ -278,6 +281,22 @@
       <span class="label">Move Arrow</span>
       <label class="toggle">
         <input type="checkbox" id="toggleArrows" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="turn-section">
+      <span class="label">Analyzer View</span>
+      <div class="turn-options two" role="group" aria-label="Analyzer view">
+        <button class="turn-option active" type="button" data-display-mode="full">Full</button>
+        <button class="turn-option" type="button" data-display-mode="hint">Hint</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="label">Three Moves</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggleThreeBestMoves" />
         <span class="slider"></span>
       </label>
     </div>

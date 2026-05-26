@@ -22,6 +22,8 @@
   let enabled = true;
   let suggestionsEnabled = true;
   let arrowsEnabled = true;
+  let analysisDisplayMode = 'full';
+  let multiPvEnabled = false;
   let visualToggleHotkey = DEFAULT_VISUAL_TOGGLE_HOTKEY;
   let menuOpen = true;
   let currentDepth = 16;
@@ -31,6 +33,8 @@
   let engineError = '';
   let engineRequestId = 0;
   let activeAnalysisId = 0;
+  let lastAnalysisResult = null;
+  let lastAnalysisFen = '';
   const engineRequests = new Map();
 
   // ── Boot ───────────────────────────────────────────────────────────────────
@@ -47,6 +51,8 @@
     'enabled',
     'suggestionsEnabled',
     'arrowsEnabled',
+    'analysisDisplayMode',
+    'multiPvEnabled',
     'visualToggleHotkey',
     'depth',
     'playingSideMode',
@@ -55,11 +61,14 @@
     if (s.enabled !== undefined) enabled = s.enabled;
     if (s.suggestionsEnabled !== undefined) suggestionsEnabled = s.suggestionsEnabled;
     if (s.arrowsEnabled !== undefined) arrowsEnabled = s.arrowsEnabled;
+    if (isValidDisplayMode(s.analysisDisplayMode)) analysisDisplayMode = s.analysisDisplayMode;
+    if (s.multiPvEnabled !== undefined) multiPvEnabled = Boolean(s.multiPvEnabled);
     if (isValidHotkey(s.visualToggleHotkey)) visualToggleHotkey = s.visualToggleHotkey;
     if (s.depth)   currentDepth = s.depth;
     if (isValidSideMode(s.playingSideMode)) playingSideMode = s.playingSideMode;
     if (isValidTurnMode(s.turnMode)) turnMode = s.turnMode;
     updateOverlayVisibility();
+    updateOverlayOptionControls();
     updateArrowVisibility();
     if (!enabled) clearBestMoveArrow();
     updateAnalyzerToggle();
@@ -81,6 +90,12 @@
       arrowsEnabled = Boolean(msg.value);
       updateArrowVisibility();
       sendStatus();
+    }
+    if (msg.type === 'SET_ANALYSIS_DISPLAY_MODE') {
+      setAnalysisDisplayMode(msg.value, { persist: false });
+    }
+    if (msg.type === 'SET_MULTI_PV_ENABLED') {
+      setMultiPvEnabled(msg.value, { persist: false });
     }
     if (msg.type === 'SET_VISUAL_TOGGLE_HOTKEY') {
       visualToggleHotkey = isValidHotkey(msg.value) ? msg.value : DEFAULT_VISUAL_TOGGLE_HOTKEY;
@@ -414,8 +429,10 @@
 
     try {
       await waitForEngine(8000);
-      const result = await analyzeWithEngine(fen, currentDepth);
+      const result = await analyzeWithEngine(fen, currentDepth, multiPvEnabled ? 3 : 1);
       if (!enabled || analysisId !== activeAnalysisId) return;
+      lastAnalysisResult = result;
+      lastAnalysisFen = fen;
       showResult(result, fen);
     } catch (e) {
       if (!enabled || analysisId !== activeAnalysisId) return;
@@ -465,7 +482,7 @@
     }
   }
 
-  function analyzeWithEngine(fen, depth) {
+  function analyzeWithEngine(fen, depth, multiPv) {
     const requestId = ++engineRequestId;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -479,7 +496,8 @@
         type: 'ANALYZE',
         requestId,
         fen,
-        depth
+        depth,
+        multiPv
       }, window.location.origin);
     });
   }
@@ -534,6 +552,10 @@
     return typeof value === 'string' && value.trim().length > 0 && value !== 'Insert';
   }
 
+  function isValidDisplayMode(value) {
+    return value === 'full' || value === 'hint';
+  }
+
   function isValidTurnMode(value) {
     return value === 'auto' || value === 'w' || value === 'b';
   }
@@ -571,6 +593,8 @@
       engineError,
       suggestionsEnabled,
       arrowsEnabled,
+      analysisDisplayMode,
+      multiPvEnabled,
       visualToggleHotkey,
       menuOpen,
       ...sideState
@@ -603,6 +627,83 @@
     const moves = pvMatch ? pvMatch[1].trim().split(' ').slice(0, 5) : [];
     const depth = depthMatch ? depthMatch[1] : '?';
     return { score, moves, depth };
+  }
+
+  function getCandidateLines(result) {
+    const infos = Array.isArray(result.pvInfos) && result.pvInfos.length
+      ? result.pvInfos
+      : [result.info || ''];
+
+    const candidates = infos.map((info, index) => {
+      const parsed = parseInfo(info || '');
+      const move = index === 0 ? (result.bestMove || parsed.moves[0]) : parsed.moves[0];
+      const normalizedMove = normalizeUciMove(move);
+      if (!normalizedMove) return null;
+      return {
+        move: normalizedMove,
+        score: parsed.score,
+        moves: parsed.moves,
+        depth: parsed.depth
+      };
+    }).filter(Boolean);
+
+    if (!candidates.length && normalizeUciMove(result.bestMove)) {
+      candidates.push({
+        move: normalizeUciMove(result.bestMove),
+        score: '?',
+        moves: [],
+        depth: '?'
+      });
+    }
+
+    return candidates;
+  }
+
+  function getMoveHint(move, fen) {
+    const normalized = normalizeUciMove(move);
+    const from = normalized ? normalized.slice(0, 2) : '';
+    const piece = pieceAtSquareFromFen(fen, from);
+    return {
+      square: from,
+      pieceName: piece ? pieceName(piece) : 'Piece',
+      label: piece ? `${pieceName(piece)} on ${from}` : `Piece on ${from}`
+    };
+  }
+
+  function pieceAtSquareFromFen(fen, square) {
+    const match = String(square || '').match(/^([a-h])([1-8])$/);
+    if (!match) return '';
+
+    const ranks = String(fen || '').split(' ')[0].split('/');
+    if (ranks.length !== 8) return '';
+
+    const fileIndex = match[1].charCodeAt(0) - 97;
+    const rankIndex = 8 - Number(match[2]);
+    let fileCursor = 0;
+
+    for (const char of ranks[rankIndex] || '') {
+      const empty = Number(char);
+      if (Number.isInteger(empty) && empty > 0) {
+        fileCursor += empty;
+        continue;
+      }
+      if (fileCursor === fileIndex) return char;
+      fileCursor++;
+    }
+
+    return '';
+  }
+
+  function pieceName(piece) {
+    const names = {
+      p: 'Pawn',
+      n: 'Knight',
+      b: 'Bishop',
+      r: 'Rook',
+      q: 'Queen',
+      k: 'King'
+    };
+    return names[String(piece || '').toLowerCase()] || 'Piece';
   }
 
   function uciToSan(move) {
@@ -650,7 +751,25 @@
         </div>
       </div>
       <div class="ca-body">
-        <div class="ca-status">Waiting for position…</div>
+        <div class="ca-options">
+          <div class="ca-option-block">
+            <div class="ca-option-label">Analyzer View</div>
+            <div class="ca-segment" role="group" aria-label="Analyzer view">
+              <button class="ca-segment-button" type="button" data-ca-display-mode="full">Full</button>
+              <button class="ca-segment-button" type="button" data-ca-display-mode="hint">Hint</button>
+            </div>
+          </div>
+          <div class="ca-option-row">
+            <span class="ca-option-label">Three Moves</span>
+            <label class="ca-mini-toggle" title="Show three candidate moves">
+              <input class="ca-multipv-input" type="checkbox" aria-label="Show three candidate moves" />
+              <span class="ca-mini-toggle-track"></span>
+            </label>
+          </div>
+        </div>
+        <div class="ca-analysis">
+          <div class="ca-status">Waiting for position…</div>
+        </div>
       </div>
     `;
     document.body.appendChild(overlayEl);
@@ -665,9 +784,20 @@
       sendStatus();
     });
 
+    overlayEl.querySelectorAll('[data-ca-display-mode]').forEach((button) => {
+      button.addEventListener('click', () => {
+        setAnalysisDisplayMode(button.dataset.caDisplayMode, { persist: true });
+      });
+    });
+
+    overlayEl.querySelector('.ca-multipv-input').addEventListener('change', (event) => {
+      setMultiPvEnabled(event.target.checked, { persist: true });
+    });
+
     // Drag support
     makeDraggable(overlayEl);
     updateAnalyzerToggle();
+    updateOverlayOptionControls();
     updateOverlayVisibility();
   }
 
@@ -683,63 +813,156 @@
     overlayEl.classList.toggle('ca-paused', !enabled);
   }
 
-  function showLoading() {
+  function updateOverlayOptionControls() {
     if (!overlayEl) return;
+
+    overlayEl.querySelectorAll('[data-ca-display-mode]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.caDisplayMode === analysisDisplayMode);
+    });
+
+    const multiPvInput = overlayEl.querySelector('.ca-multipv-input');
+    if (multiPvInput) multiPvInput.checked = multiPvEnabled;
+  }
+
+  function setAnalysisDisplayMode(value, options = {}) {
+    analysisDisplayMode = isValidDisplayMode(value) ? value : 'full';
+    if (options.persist) chrome.storage.sync.set({ analysisDisplayMode });
+
+    updateOverlayOptionControls();
+
+    if (lastAnalysisResult && lastAnalysisFen) {
+      showResult(lastAnalysisResult, lastAnalysisFen);
+    } else {
+      updateArrowVisibility();
+    }
+
+    sendStatus();
+  }
+
+  function setMultiPvEnabled(value, options = {}) {
+    multiPvEnabled = Boolean(value);
+    if (options.persist) chrome.storage.sync.set({ multiPvEnabled });
+
+    updateOverlayOptionControls();
+    lastFen = '';
+
+    if (lastAnalysisResult && lastAnalysisFen && !multiPvEnabled) {
+      showResult(lastAnalysisResult, lastAnalysisFen);
+    }
+
+    if (enabled) onBoardChange();
+    sendStatus();
+  }
+
+  function getAnalysisEl() {
+    return overlayEl ? overlayEl.querySelector('.ca-analysis') : null;
+  }
+
+  function showLoading() {
+    const analysisEl = getAnalysisEl();
+    if (!analysisEl) return;
     if (!enabled) {
       showPaused();
       return;
     }
     clearBestMoveArrow();
-    overlayEl.querySelector('.ca-body').innerHTML = `
+    analysisEl.innerHTML = `
       <div class="ca-status ca-pulse">Analyzing<span class="ca-dots"></span></div>
     `;
   }
 
   function showResult(result, fen) {
-    if (!overlayEl) return;
+    const analysisEl = getAnalysisEl();
+    if (!analysisEl) return;
     if (!enabled) {
       showPaused();
       return;
     }
-    const { bestMove, info } = result;
-    const { score, moves, depth } = parseInfo(info);
+    const candidates = getCandidateLines(result);
+    const primary = candidates[0];
+    if (!primary) {
+      showError('No legal move found');
+      return;
+    }
+
+    drawBestMoveArrow(primary.move);
+
+    if (analysisDisplayMode === 'hint') {
+      showHintResult(candidates, fen);
+      return;
+    }
+
+    const { score, moves, depth } = primary;
     const sc = scoreColor(score);
-    drawBestMoveArrow(bestMove || moves[0]);
+    const visibleCandidates = multiPvEnabled ? candidates.slice(0, 3) : [];
 
     const movesHTML = moves.slice(0, 5).map((m, i) => `
       <span class="ca-move ${i === 0 ? 'ca-best' : ''}">${uciToSan(m)}</span>
     `).join('');
 
-    overlayEl.querySelector('.ca-body').innerHTML = `
+    const candidatesHTML = visibleCandidates.map((candidate, index) => `
+      <div class="ca-candidate ${index === 0 ? 'ca-best-candidate' : ''}">
+        <span class="ca-candidate-rank">#${index + 1}</span>
+        <span class="ca-candidate-move">${uciToSan(candidate.move)}</span>
+        <span class="ca-candidate-score">${candidate.score}</span>
+      </div>
+    `).join('');
+
+    analysisEl.innerHTML = `
       <div class="ca-score-row">
         <div class="ca-eval" style="color:${sc}">${score}</div>
         <div class="ca-depth">depth ${depth}</div>
       </div>
       <div class="ca-label">Best move</div>
-      <div class="ca-best-move">${uciToSan(bestMove)}</div>
+      <div class="ca-best-move">${uciToSan(primary.move)}</div>
+      ${candidatesHTML ? `
+        <div class="ca-label">Candidate moves</div>
+        <div class="ca-candidates">${candidatesHTML}</div>
+      ` : ''}
       <div class="ca-label">Top line</div>
       <div class="ca-moves">${movesHTML || '—'}</div>
       <div class="ca-fen" title="${fen}">${fen.split(' ')[0].substring(0, 36)}…</div>
     `;
   }
 
+  function showHintResult(candidates, fen) {
+    const analysisEl = getAnalysisEl();
+    if (!analysisEl) return;
+    const visibleHints = (multiPvEnabled ? candidates.slice(0, 3) : candidates.slice(0, 1))
+      .map(candidate => getMoveHint(candidate.move, fen));
+    const primaryHint = visibleHints[0];
+
+    analysisEl.innerHTML = `
+      <div class="ca-hint-title">Move this piece</div>
+      <div class="ca-hint-piece">${primaryHint.label}</div>
+      ${visibleHints.length > 1 ? `
+        <div class="ca-label">Candidate pieces</div>
+        <div class="ca-hints">
+          ${visibleHints.map((hint, index) => `
+            <div class="ca-hint-row">
+              <span class="ca-candidate-rank">#${index + 1}</span>
+              <span>${hint.label}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    `;
+  }
+
   function showPaused() {
-    if (!overlayEl) return;
-    overlayEl.querySelector('.ca-body').innerHTML = `
+    const analysisEl = getAnalysisEl();
+    if (!analysisEl) return;
+    analysisEl.innerHTML = `
       <div class="ca-status ca-paused-status">Analyzer paused</div>
     `;
   }
 
   function showError(msg) {
-    if (!overlayEl) return;
+    const analysisEl = getAnalysisEl();
+    if (!analysisEl) return;
     clearBestMoveArrow();
-    const body = overlayEl.querySelector('.ca-body');
-    body.innerHTML = '<div class="ca-status ca-error"></div>';
-    body.querySelector('.ca-error').textContent = msg;
-    return;
-    overlayEl.querySelector('.ca-body').innerHTML = `
-      <div class="ca-status ca-error">⚠ ${msg}</div>
-    `;
+    analysisEl.innerHTML = '<div class="ca-status ca-error"></div>';
+    analysisEl.querySelector('.ca-error').textContent = msg;
   }
 
   // Board arrow
@@ -757,15 +980,66 @@
     }
 
     currentArrowMove = normalized;
-    renderBestMoveArrow(normalized);
+    renderMoveVisual(normalized);
   }
 
   function scheduleArrowRedraw() {
     if (!enabled || !arrowsEnabled || !currentArrowMove || arrowRedrawFrame) return;
     arrowRedrawFrame = requestAnimationFrame(() => {
       arrowRedrawFrame = 0;
-      if (enabled && arrowsEnabled && currentArrowMove) renderBestMoveArrow(currentArrowMove);
+      if (enabled && arrowsEnabled && currentArrowMove) renderMoveVisual(currentArrowMove);
     });
+  }
+
+  function renderMoveVisual(move) {
+    if (analysisDisplayMode === 'hint') {
+      renderMoveHint(move);
+      return;
+    }
+    renderBestMoveArrow(move);
+  }
+
+  function renderMoveHint(move) {
+    if (!enabled || !arrowsEnabled) {
+      hideBestMoveArrow();
+      return;
+    }
+
+    const board = getBoard();
+    if (!board) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    const rect = board.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    const from = squareToBoardPoint(move.slice(0, 2), board, rect);
+    if (!from) {
+      clearBestMoveArrow();
+      return;
+    }
+
+    ensureArrowLayer();
+    arrowLayerEl.style.left = `${rect.left}px`;
+    arrowLayerEl.style.top = `${rect.top}px`;
+    arrowLayerEl.style.width = `${rect.width}px`;
+    arrowLayerEl.style.height = `${rect.height}px`;
+    arrowLayerEl.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+
+    const boardSize = Math.min(rect.width, rect.height);
+    const squareSize = boardSize / 8;
+    const ringRadius = clamp(squareSize * 0.32, 16, 34);
+    const dotRadius = clamp(squareSize * 0.08, 4, 9);
+
+    arrowLayerEl.innerHTML = `
+      <circle class="ca-hint-origin-ring" cx="${from.x}" cy="${from.y}" r="${ringRadius}"></circle>
+      <circle class="ca-hint-origin-dot" cx="${from.x}" cy="${from.y}" r="${dotRadius}"></circle>
+    `;
+    arrowLayerEl.classList.remove('ca-hidden');
   }
 
   function renderBestMoveArrow(move) {
@@ -876,7 +1150,7 @@
 
     if (lastBestMove) {
       currentArrowMove = lastBestMove;
-      renderBestMoveArrow(lastBestMove);
+      renderMoveVisual(lastBestMove);
     }
   }
 

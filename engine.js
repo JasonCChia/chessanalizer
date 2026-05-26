@@ -78,16 +78,21 @@
   window.__chessEngine = {
     ready: engineReady,
 
-    analyze(fen, depth = 16) {
+    analyze(fen, depth = 16, multiPv = 1) {
       return new Promise(async (resolve) => {
         await engineReady;
+        const candidateCount = Math.max(1, Math.min(3, Number(multiPv) || 1));
         const lines = [];
+        const linesByPv = new Map();
         let settled = false;
 
         function onMsg(e) {
           const msg = e.detail;
           if (msg.startsWith('info') && msg.includes('score') && msg.includes('pv')) {
             lines.push(msg);
+            const pvMatch = msg.match(/ multipv (\d+)/);
+            const pvIndex = pvMatch ? Number(pvMatch[1]) : 1;
+            linesByPv.set(pvIndex, msg);
           }
           if (msg.startsWith('bestmove')) {
             if (settled) return;
@@ -95,11 +100,19 @@
             window.removeEventListener('__sf_msg', onMsg);
             const best = msg.split(' ')[1];
             const last = lines[lines.length - 1] || '';
-            resolve({ bestMove: best, info: last, raw: lines });
+            const pvInfos = Array.from({ length: candidateCount }, (_, index) => linesByPv.get(index + 1))
+              .filter(Boolean);
+            resolve({
+              bestMove: best,
+              info: linesByPv.get(1) || last,
+              pvInfos,
+              raw: lines
+            });
           }
         }
 
         window.addEventListener('__sf_msg', onMsg);
+        engine.postMessage('setoption name MultiPV value ' + candidateCount);
         engine.postMessage('position fen ' + fen);
         engine.postMessage('go depth ' + depth);
       });
@@ -123,7 +136,7 @@
     if (msg.type !== 'ANALYZE') return;
 
     try {
-      const result = await window.__chessEngine.analyze(msg.fen, msg.depth);
+      const result = await window.__chessEngine.analyze(msg.fen, msg.depth, msg.multiPv);
       postBridge({
         type: 'ANALYSIS_RESULT',
         requestId: msg.requestId,

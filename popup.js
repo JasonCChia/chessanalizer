@@ -5,12 +5,14 @@ const DEFAULT_VISUAL_TOGGLE_HOTKEY = 'Alt+S';
 const toggleEnabled = document.getElementById('toggleEnabled');
 const toggleSuggestions = document.getElementById('toggleSuggestions');
 const toggleArrows = document.getElementById('toggleArrows');
+const toggleThreeBestMoves = document.getElementById('toggleThreeBestMoves');
 const visualHotkeyInput = document.getElementById('visualHotkeyInput');
 const resetHotkey = document.getElementById('resetHotkey');
 const depthSlider = document.getElementById('depthSlider');
 const depthVal = document.getElementById('depthVal');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
+const displayModeButtons = [...document.querySelectorAll('[data-display-mode]')];
 const playingSideButtons = [...document.querySelectorAll('[data-playing-side-mode]')];
 const turnButtons = [...document.querySelectorAll('[data-turn-mode]')];
 
@@ -22,6 +24,8 @@ chrome.storage.sync.get([
   'enabled',
   'suggestionsEnabled',
   'arrowsEnabled',
+  'analysisDisplayMode',
+  'multiPvEnabled',
   'visualToggleHotkey',
   'depth',
   'playingSideMode',
@@ -30,6 +34,8 @@ chrome.storage.sync.get([
   const en = s.enabled !== undefined ? s.enabled : true;
   const suggestions = s.suggestionsEnabled !== undefined ? s.suggestionsEnabled : true;
   const arrows = s.arrowsEnabled !== undefined ? s.arrowsEnabled : true;
+  const displayMode = isValidDisplayMode(s.analysisDisplayMode) ? s.analysisDisplayMode : 'full';
+  const multiPv = s.multiPvEnabled !== undefined ? s.multiPvEnabled : false;
   const dp = s.depth || 16;
   const ps = isValidSideMode(s.playingSideMode) ? s.playingSideMode : 'auto';
   const tm = isValidTurnMode(s.turnMode) ? s.turnMode : 'auto';
@@ -38,6 +44,8 @@ chrome.storage.sync.get([
   toggleEnabled.checked = en;
   toggleSuggestions.checked = suggestions;
   toggleArrows.checked = arrows;
+  toggleThreeBestMoves.checked = multiPv;
+  setDisplayModeUI(displayMode);
   setVisualHotkeyUI(hotkey);
   depthSlider.value = dp;
   depthVal.textContent = dp;
@@ -62,6 +70,22 @@ toggleArrows.addEventListener('change', () => {
   const val = toggleArrows.checked;
   chrome.storage.sync.set({ arrowsEnabled: val });
   sendToContent({ type: 'SET_ARROWS_ENABLED', value: val });
+});
+
+toggleThreeBestMoves.addEventListener('change', () => {
+  const val = toggleThreeBestMoves.checked;
+  chrome.storage.sync.set({ multiPvEnabled: val });
+  sendToContent({ type: 'SET_MULTI_PV_ENABLED', value: val });
+});
+
+displayModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const mode = button.dataset.displayMode;
+    if (!isValidDisplayMode(mode)) return;
+    setDisplayModeUI(mode);
+    chrome.storage.sync.set({ analysisDisplayMode: mode });
+    sendToContent({ type: 'SET_ANALYSIS_DISPLAY_MODE', value: mode });
+  });
 });
 
 visualHotkeyInput.addEventListener('focus', startHotkeyCapture);
@@ -135,6 +159,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
     if (typeof msg.arrowsEnabled === 'boolean') {
       toggleArrows.checked = msg.arrowsEnabled;
+    }
+    if (typeof msg.multiPvEnabled === 'boolean') {
+      toggleThreeBestMoves.checked = msg.multiPvEnabled;
+    }
+    if (isValidDisplayMode(msg.analysisDisplayMode)) {
+      setDisplayModeUI(msg.analysisDisplayMode);
     }
     if (isValidHotkey(msg.visualToggleHotkey) && !visualHotkeyInput.classList.contains('capturing')) {
       setVisualHotkeyUI(msg.visualToggleHotkey);
@@ -216,6 +246,12 @@ function setPlayingSideUI(mode) {
   });
 }
 
+function setDisplayModeUI(mode) {
+  displayModeButtons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.displayMode === mode);
+  });
+}
+
 function withSideStatus(base, msg) {
   const move = labelSide(msg.effectiveTurn || msg.detectedTurn);
   const playing = labelSide(msg.effectivePlayingSide || msg.detectedPlayingSide);
@@ -263,6 +299,10 @@ function isValidHotkey(value) {
 
 function isReservedHotkey(value) {
   return value === 'Insert';
+}
+
+function isValidDisplayMode(value) {
+  return value === 'full' || value === 'hint';
 }
 
 function isValidTurnMode(value) {
