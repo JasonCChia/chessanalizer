@@ -65,7 +65,7 @@
     window.dispatchEvent(new CustomEvent('__sf_msg', { detail: msg }));
   }
 
-  function waitForReadyOk(timeoutMs = 2000) {
+  function waitForReadyOk(timeoutMs = 600) {
     return new Promise((resolve) => {
       let settled = false;
       const timeout = setTimeout(() => finish(false), timeoutMs);
@@ -113,7 +113,7 @@
 
         function onMsg(e) {
           const msg = e.detail;
-          if (msg.startsWith('info') && msg.includes('score') && msg.includes('pv')) {
+          if (msg.startsWith('info') && /\bscore\s+/i.test(msg) && /\bpv\s+/i.test(msg)) {
             lines.push(msg);
             const pvMatch = msg.match(/\bmultipv\s+(\d+)/i);
             const pvIndex = pvMatch ? Number(pvMatch[1]) : 1;

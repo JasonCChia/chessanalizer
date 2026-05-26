@@ -10,13 +10,15 @@
     bp: 'p', br: 'r', bn: 'n', bb: 'b', bq: 'q', bk: 'k'
   };
   const DEFAULT_VISUAL_TOGGLE_HOTKEY = 'Alt+S';
+  const MULTI_PV_DEPTH_REDUCTION = 4;
+  const MULTI_PV_MAX_DEPTH = 14;
 
   // ── State ──────────────────────────────────────────────────────────────────
   let lastFen = '';
   let overlayEl = null;
   let arrowLayerEl = null;
-  let currentArrowMove = null;
-  let lastBestMove = null;
+  let currentArrowMoves = [];
+  let lastBestMoves = [];
   let arrowRedrawFrame = 0;
   let analyzing = false;
   let enabled = true;
@@ -429,7 +431,11 @@
 
     try {
       await waitForEngine(8000);
-      const result = await analyzeWithEngine(fen, currentDepth, multiPvEnabled ? 3 : 1);
+      const result = await analyzeWithEngine(
+        fen,
+        getEffectiveAnalysisDepth(),
+        multiPvEnabled ? 3 : 1
+      );
       if (!enabled || analysisId !== activeAnalysisId) return;
       lastAnalysisResult = result;
       lastAnalysisFen = fen;
@@ -500,6 +506,11 @@
         multiPv
       }, window.location.origin);
     });
+  }
+
+  function getEffectiveAnalysisDepth() {
+    if (!multiPvEnabled) return currentDepth;
+    return clamp(currentDepth - MULTI_PV_DEPTH_REDUCTION, 6, MULTI_PV_MAX_DEPTH);
   }
 
   function stopEngine() {
@@ -608,9 +619,9 @@
   }
 
   function parseInfo(info) {
-    const scoreMatch = info.match(/score (cp|mate) (-?\d+)/);
-    const pvMatch    = info.match(/pv (.+)/);
-    const depthMatch = info.match(/depth (\d+)/);
+    const scoreMatch = info.match(/\bscore\s+(cp|mate)\s+(-?\d+)/i);
+    const pvMatch    = info.match(/\bpv\s+(.+)$/i);
+    const depthMatch = info.match(/\bdepth\s+(\d+)/i);
 
     let score = '?';
     if (scoreMatch) {
@@ -665,7 +676,7 @@
     if (Array.isArray(result.raw) && result.raw.length) {
       const byPv = new Map();
       for (const info of result.raw) {
-        if (!info || !info.includes('score') || !info.includes('pv')) continue;
+        if (!info || !/\bscore\s+/i.test(info) || !/\bpv\s+/i.test(info)) continue;
         const pvMatch = info.match(/\bmultipv\s+(\d+)/i);
         const pvIndex = pvMatch ? Number(pvMatch[1]) : 1;
         byPv.set(pvIndex, info);
@@ -907,22 +918,23 @@
       return;
     }
 
-    drawBestMoveArrow(primary.move);
-
     if (analysisDisplayMode === 'hint') {
+      drawBestMoveArrow(primary.move);
       showHintResult(candidates, fen);
       return;
     }
 
     const { score, moves, depth } = primary;
     const sc = scoreColor(score);
-    const visibleCandidates = multiPvEnabled ? candidates.slice(0, 3) : [];
+    const visibleCandidates = multiPvEnabled ? candidates.slice(0, 3) : [primary];
+    drawCandidateMoveArrows(visibleCandidates.map(candidate => candidate.move));
 
     const movesHTML = moves.slice(0, 5).map((m, i) => `
       <span class="ca-move ${i === 0 ? 'ca-best' : ''}">${uciToSan(m)}</span>
     `).join('');
 
-    const candidatesHTML = visibleCandidates.map((candidate, index) => `
+    const candidateRows = multiPvEnabled ? visibleCandidates : [];
+    const candidatesHTML = candidateRows.map((candidate, index) => `
       <div class="ca-candidate ${index === 0 ? 'ca-best-candidate' : ''}">
         <span class="ca-candidate-rank">#${index + 1}</span>
         <span class="ca-candidate-move">${uciToSan(candidate.move)}</span>
@@ -989,36 +1001,41 @@
 
   // Board arrow
   function drawBestMoveArrow(move) {
-    const normalized = normalizeUciMove(move);
-    if (!normalized) {
+    drawCandidateMoveArrows([move]);
+  }
+
+  function drawCandidateMoveArrows(moves) {
+    const normalizedMoves = normalizeMoveList(moves);
+    if (!normalizedMoves.length) {
       clearBestMoveArrow();
       return;
     }
 
-    lastBestMove = normalized;
+    lastBestMoves = normalizedMoves;
     if (!enabled || !arrowsEnabled) {
       hideBestMoveArrow();
       return;
     }
 
-    currentArrowMove = normalized;
-    renderMoveVisual(normalized);
+    currentArrowMoves = normalizedMoves;
+    renderMoveVisual(normalizedMoves);
   }
 
   function scheduleArrowRedraw() {
-    if (!enabled || !arrowsEnabled || !currentArrowMove || arrowRedrawFrame) return;
+    if (!enabled || !arrowsEnabled || !currentArrowMoves.length || arrowRedrawFrame) return;
     arrowRedrawFrame = requestAnimationFrame(() => {
       arrowRedrawFrame = 0;
-      if (enabled && arrowsEnabled && currentArrowMove) renderMoveVisual(currentArrowMove);
+      if (enabled && arrowsEnabled && currentArrowMoves.length) renderMoveVisual(currentArrowMoves);
     });
   }
 
-  function renderMoveVisual(move) {
+  function renderMoveVisual(moves) {
+    const moveList = Array.isArray(moves) ? moves : [moves];
     if (analysisDisplayMode === 'hint') {
-      renderMoveHint(move);
+      renderMoveHint(moveList[0]);
       return;
     }
-    renderBestMoveArrow(move);
+    renderBestMoveArrows(moveList);
   }
 
   function renderMoveHint(move) {
@@ -1064,7 +1081,7 @@
     arrowLayerEl.classList.remove('ca-hidden');
   }
 
-  function renderBestMoveArrow(move) {
+  function renderBestMoveArrows(moves) {
     if (!enabled || !arrowsEnabled) {
       hideBestMoveArrow();
       return;
@@ -1078,21 +1095,6 @@
 
     const rect = board.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
-      clearBestMoveArrow();
-      return;
-    }
-
-    const from = squareToBoardPoint(move.slice(0, 2), board, rect);
-    const to = squareToBoardPoint(move.slice(2, 4), board, rect);
-    if (!from || !to) {
-      clearBestMoveArrow();
-      return;
-    }
-
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const length = Math.hypot(dx, dy);
-    if (!length) {
       clearBestMoveArrow();
       return;
     }
@@ -1112,31 +1114,79 @@
     const tailPad = clamp(squareSize * 0.2, 10, 22);
     const arrowHeadLength = clamp(boardSize * 0.035, 12, 22);
     const arrowHeadWidth = clamp(boardSize * 0.026, 9, 16);
-    const ux = dx / length;
-    const uy = dy / length;
-    const x1 = from.x + ux * tailPad;
-    const y1 = from.y + uy * tailPad;
+    const arrowGroups = moves
+      .map((move, index) => buildArrowSvg(move, index, board, rect, {
+        strokeWidth,
+        targetRadius,
+        tailRadius,
+        tailPad
+      }))
+      .filter(Boolean)
+      .reverse()
+      .join('');
+
+    if (!arrowGroups) {
+      clearBestMoveArrow();
+      return;
+    }
 
     arrowLayerEl.innerHTML = `
       <defs>
-        <marker
-          id="ca-arrow-head"
-          viewBox="0 0 ${arrowHeadLength} ${arrowHeadWidth}"
-          markerWidth="${arrowHeadLength}"
-          markerHeight="${arrowHeadWidth}"
-          refX="${arrowHeadLength}"
-          refY="${arrowHeadWidth / 2}"
-          orient="auto"
-          markerUnits="userSpaceOnUse"
-        >
-          <path d="M0,0 L${arrowHeadLength},${arrowHeadWidth / 2} L0,${arrowHeadWidth} Z" fill="#7ee787"></path>
-        </marker>
+        ${[0, 1, 2].map((index) => `
+          <marker
+            id="ca-arrow-head-${index}"
+            viewBox="0 0 ${arrowHeadLength} ${arrowHeadWidth}"
+            markerWidth="${arrowHeadLength}"
+            markerHeight="${arrowHeadWidth}"
+            refX="${arrowHeadLength}"
+            refY="${arrowHeadWidth / 2}"
+            orient="auto"
+            markerUnits="userSpaceOnUse"
+          >
+            <path
+              d="M0,0 L${arrowHeadLength},${arrowHeadWidth / 2} L0,${arrowHeadWidth} Z"
+              fill="#7ee787"
+            ></path>
+          </marker>
+        `).join('')}
       </defs>
-      <circle class="ca-arrow-target" cx="${to.x}" cy="${to.y}" r="${targetRadius}"></circle>
-      <circle class="ca-arrow-tail" cx="${from.x}" cy="${from.y}" r="${tailRadius}"></circle>
-      <line class="ca-arrow-line" x1="${x1}" y1="${y1}" x2="${to.x}" y2="${to.y}" stroke-width="${strokeWidth}" marker-end="url(#ca-arrow-head)"></line>
+      ${arrowGroups}
     `;
     arrowLayerEl.classList.remove('ca-hidden');
+  }
+
+  function buildArrowSvg(move, index, board, rect, metrics) {
+    const from = squareToBoardPoint(move.slice(0, 2), board, rect);
+    const to = squareToBoardPoint(move.slice(2, 4), board, rect);
+    if (!from || !to) return '';
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (!length) return '';
+
+    const ux = dx / length;
+    const uy = dy / length;
+    const x1 = from.x + ux * metrics.tailPad;
+    const y1 = from.y + uy * metrics.tailPad;
+    const opacity = getCandidateArrowOpacity(index);
+    const targetOpacity = index === 0 ? 1 : 0.72;
+    const strokeWidth = index === 0 ? metrics.strokeWidth : metrics.strokeWidth * 0.82;
+    const markerId = `ca-arrow-head-${Math.min(index, 2)}`;
+
+    return `
+      <g class="ca-arrow-group" opacity="${opacity}">
+        <circle class="ca-arrow-target" cx="${to.x}" cy="${to.y}" r="${metrics.targetRadius}" opacity="${targetOpacity}"></circle>
+        <circle class="ca-arrow-tail" cx="${from.x}" cy="${from.y}" r="${metrics.tailRadius}"></circle>
+        <line class="ca-arrow-line" x1="${x1}" y1="${y1}" x2="${to.x}" y2="${to.y}" stroke-width="${strokeWidth}" marker-end="url(#${markerId})"></line>
+      </g>
+    `;
+  }
+
+  function getCandidateArrowOpacity(index) {
+    if (index === 0) return 0.95;
+    if (index === 1) return 0.48;
+    return 0.32;
   }
 
   function ensureArrowLayer() {
@@ -1148,12 +1198,12 @@
   }
 
   function clearBestMoveArrow() {
-    lastBestMove = null;
+    lastBestMoves = [];
     hideBestMoveArrow();
   }
 
   function hideBestMoveArrow() {
-    currentArrowMove = null;
+    currentArrowMoves = [];
     if (arrowRedrawFrame) {
       cancelAnimationFrame(arrowRedrawFrame);
       arrowRedrawFrame = 0;
@@ -1170,10 +1220,21 @@
       return;
     }
 
-    if (lastBestMove) {
-      currentArrowMove = lastBestMove;
-      renderMoveVisual(lastBestMove);
+    if (lastBestMoves.length) {
+      currentArrowMoves = lastBestMoves;
+      renderMoveVisual(lastBestMoves);
     }
+  }
+
+  function normalizeMoveList(moves) {
+    const seen = new Set();
+    return (Array.isArray(moves) ? moves : [moves])
+      .map(normalizeUciMove)
+      .filter((move) => {
+        if (!move || seen.has(move)) return false;
+        seen.add(move);
+        return true;
+      });
   }
 
   function normalizeUciMove(move) {
