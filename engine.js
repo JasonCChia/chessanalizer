@@ -65,6 +65,28 @@
     window.dispatchEvent(new CustomEvent('__sf_msg', { detail: msg }));
   }
 
+  function waitForReadyOk(timeoutMs = 2000) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timeout = setTimeout(() => finish(false), timeoutMs);
+
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        window.removeEventListener('__sf_msg', onMsg);
+        resolve(value);
+      }
+
+      function onMsg(e) {
+        if (e.detail === 'readyok') finish(true);
+      }
+
+      window.addEventListener('__sf_msg', onMsg);
+      engine.postMessage('isready');
+    });
+  }
+
   function postBridge(payload) {
     window.postMessage({
       source: 'chess-analyzer-engine',
@@ -86,11 +108,14 @@
         const linesByPv = new Map();
         let settled = false;
 
+        engine.postMessage('setoption name MultiPV value ' + candidateCount);
+        await waitForReadyOk();
+
         function onMsg(e) {
           const msg = e.detail;
           if (msg.startsWith('info') && msg.includes('score') && msg.includes('pv')) {
             lines.push(msg);
-            const pvMatch = msg.match(/ multipv (\d+)/);
+            const pvMatch = msg.match(/\bmultipv\s+(\d+)/i);
             const pvIndex = pvMatch ? Number(pvMatch[1]) : 1;
             linesByPv.set(pvIndex, msg);
           }
@@ -106,13 +131,14 @@
               bestMove: best,
               info: linesByPv.get(1) || last,
               pvInfos,
+              requestedMultiPv: candidateCount,
+              returnedMultiPv: pvInfos.length,
               raw: lines
             });
           }
         }
 
         window.addEventListener('__sf_msg', onMsg);
-        engine.postMessage('setoption name MultiPV value ' + candidateCount);
         engine.postMessage('position fen ' + fen);
         engine.postMessage('go depth ' + depth);
       });

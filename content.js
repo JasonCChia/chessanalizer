@@ -630,9 +630,7 @@
   }
 
   function getCandidateLines(result) {
-    const infos = Array.isArray(result.pvInfos) && result.pvInfos.length
-      ? result.pvInfos
-      : [result.info || ''];
+    const infos = collectPvInfos(result);
 
     const candidates = infos.map((info, index) => {
       const parsed = parseInfo(info || '');
@@ -657,6 +655,30 @@
     }
 
     return candidates;
+  }
+
+  function collectPvInfos(result) {
+    if (Array.isArray(result.pvInfos) && result.pvInfos.length) {
+      return result.pvInfos;
+    }
+
+    if (Array.isArray(result.raw) && result.raw.length) {
+      const byPv = new Map();
+      for (const info of result.raw) {
+        if (!info || !info.includes('score') || !info.includes('pv')) continue;
+        const pvMatch = info.match(/\bmultipv\s+(\d+)/i);
+        const pvIndex = pvMatch ? Number(pvMatch[1]) : 1;
+        byPv.set(pvIndex, info);
+      }
+
+      if (byPv.size) {
+        return [...byPv.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, info]) => info);
+      }
+    }
+
+    return [result.info || ''];
   }
 
   function getMoveHint(move, fen) {
